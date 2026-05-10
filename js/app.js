@@ -177,18 +177,23 @@ function withTimeout(promise, ms, label) {
 async function initApp(session) {
   if (initInProgress) return;
   initInProgress = true;
+  console.log('[init] start');
   try {
     let user = session?.user;
     if (!user) {
+      console.log('[init] sem session, tentando getSession');
       const { data } = await withTimeout(sb.auth.getSession(), 5000, 'getSession');
       user = data?.session?.user;
     }
     if (!user) throw new Error('Sessão inválida');
+    console.log('[init] user OK:', user.email);
 
+    console.log('[init] buscando profile...');
     let { data: profile, error } = await withTimeout(
       sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single(),
       8000, 'fetch profile'
     );
+    console.log('[init] profile result:', profile, 'error:', error);
 
     // Se não tem perfil ainda (típico após primeiro login Google), cria agora
     if (error && error.code === 'PGRST116') {
@@ -206,23 +211,33 @@ async function initApp(session) {
       throw new Error('Erro ao carregar perfil: ' + (error?.message || 'desconhecido'));
     }
     state.user = { ...profile, email: user.email };
+    console.log('[init] state.user setado');
 
-  document.getElementById('auth-screen').classList.add('hidden');
-  document.getElementById('app-screen').classList.remove('hidden');
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('app-screen').classList.remove('hidden');
+    console.log('[init] app-screen visivel');
 
-  const initials = state.user.name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
-  ['topbar-avatar','sidebar-avatar','profile-avatar'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.textContent = initials;
-  });
-  document.getElementById('sidebar-name').textContent = state.user.name;
-  document.getElementById('sidebar-email').textContent = state.user.email;
+    const initials = state.user.name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+    ['topbar-avatar','sidebar-avatar','profile-avatar'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.textContent = initials;
+    });
+    document.getElementById('sidebar-name').textContent = state.user.name;
+    document.getElementById('sidebar-email').textContent = state.user.email;
 
-  if (state.user.role === 'admin') {
-    document.getElementById('admin-nav-item').classList.remove('hidden');
-  }
+    if (state.user.role === 'admin') {
+      document.getElementById('admin-nav-item').classList.remove('hidden');
+    }
 
-  await loadCollection();
-  navigate('dashboard');
+    console.log('[init] carregando coleção...');
+    try {
+      await loadCollection();
+      console.log('[init] coleção OK');
+    } catch (e) {
+      console.warn('[init] loadCollection falhou (segue mesmo assim):', e.message);
+      state.collection = [];
+    }
+    navigate('dashboard');
+    console.log('[init] DONE');
   } finally {
     initInProgress = false;
   }
