@@ -858,46 +858,51 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
 document.getElementById('login-password')?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 document.getElementById('reg-password')?.addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); });
 
-// ─── Boot ─────────────────────────────────────────────────────────────────────
-(async function boot() {
+// ─── Boot via onAuthStateChange (única fonte de verdade) ──────────────────────
+let appStarted = false;
+
+async function startApp() {
+  if (appStarted || initInProgress) return;
   try {
-    const hadOAuthHash = window.location.hash.includes('access_token');
-    const { data: { session }, error } = await sb.auth.getSession();
-    if (error) throw error;
-
-    if (hadOAuthHash) history.replaceState(null, '', window.location.pathname);
-
-    if (session) {
-      await initApp();
-    } else {
-      showAuthScreen();
+    await initApp();
+    appStarted = true;
+    // Limpa hash do OAuth da URL
+    if (window.location.hash.includes('access_token')) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   } catch (e) {
-    console.error('Boot error:', e);
+    console.error('Falha ao iniciar app:', e);
+    appStarted = false;
     try { await sb.auth.signOut(); } catch {}
     state.user = null;
     showAuthScreen();
-    if (e.message && !e.message.includes('Sessão inválida')) {
-      toast('Erro ao carregar. Faça login novamente.');
-    }
+    toast('Erro ao entrar: ' + e.message, 5000);
   }
-})();
+}
 
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (event === 'SIGNED_OUT') {
+  console.log('[auth]', event, session ? 'com sessão' : 'sem sessão');
+
+  if (event === 'INITIAL_SESSION') {
+    // Primeira verificação ao carregar a página (já processou hash do OAuth se houver)
+    if (session) await startApp();
+    else showAuthScreen();
+  }
+  else if (event === 'SIGNED_IN') {
+    if (session && !appStarted) await startApp();
+  }
+  else if (event === 'SIGNED_OUT') {
+    appStarted = false;
     state.user = null;
     state.collection = [];
     state.opportunities = null;
     state.proposals = null;
     showAuthScreen();
-  } else if (event === 'SIGNED_IN' && session && !state.user && !initInProgress) {
-    try { await initApp(); }
-    catch (e) {
-      console.error('Auto-init failed:', e);
-      await sb.auth.signOut();
-      showAuthScreen();
-    }
-  } else if (event === 'TOKEN_REFRESHED') {
-    console.log('Token atualizado');
+  }
+  else if (event === 'TOKEN_REFRESHED') {
+    console.log('[auth] token atualizado');
+  }
+  else if (event === 'USER_UPDATED') {
+    console.log('[auth] usuário atualizado');
   }
 });
