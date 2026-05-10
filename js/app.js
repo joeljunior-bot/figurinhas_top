@@ -190,34 +190,52 @@ async function initApp(session) {
     console.log('[init] user OK:', user.email);
 
     console.log('[init] buscando profile...');
-    let { data: profile, error } = await withTimeout(
-      sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single(),
-      8000, 'fetch profile'
-    );
-    console.log('[init] profile result:', profile, 'error:', error);
+    let profile = null;
 
-    // Se não tem perfil, cria agora (primeiro login Google ou trigger falhou)
-    if (error || !profile) {
-      console.log('[init] profile não encontrado, criando...');
+    // Tenta buscar o profile até 3 vezes com 5s de timeout cada
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const { data, error } = await withTimeout(
+          sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single(),
+          5000, `fetch profile tentativa ${attempt}`
+        );
+        if (data) { profile = data; break; }
+        if (error && error.code !== 'PGRST116') console.warn(`[init] attempt ${attempt}:`, error.message);
+      } catch (e) {
+        console.warn(`[init] timeout attempt ${attempt}`);
+      }
+    }
+    console.log('[init] profile:', profile);
+
+    // Se ainda não tem, cria
+    if (!profile) {
+      console.log('[init] criando profile...');
       const meta = user.user_metadata || {};
       const newProfile = {
         id: user.id,
-        name: meta.name || meta.full_name || meta.email || user.email?.split('@')[0] || 'Usuário',
+        name: meta.name || meta.full_name || user.email?.split('@')[0] || 'Usuário',
         phone: meta.phone || '',
         role: 'user',
       };
-      const { data: created, error: insErr } = await withTimeout(
-        sb.from('profiles').upsert(newProfile, { onConflict: 'id' }).select().single(),
-        8000, 'create profile'
-      );
-      if (insErr) {
-        // Última tentativa: busca novamente (pode ter sido criado pelo trigger)
-        const { data: retry } = await sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single();
-        if (!retry) throw new Error('Não foi possível carregar o perfil');
-        profile = retry;
-      } else {
-        profile = created;
-      }
+      try {
+        const { data } = await withTimeout(
+          sb.from('profiles').upsert(newProfile, { onConflict: 'id' }).select().single(),
+          5000, 'upsert profile'
+        );
+        profile = data;
+      } catch {}
+    }
+
+    // Fallback de emergência: usa dados do auth se tudo falhar
+    if (!profile) {
+      console.warn('[init] usando fallback de auth metadata');
+      const meta = user.user_metadata || {};
+      profile = {
+        id: user.id,
+        name: meta.name || meta.full_name || user.email?.split('@')[0] || 'Usuário',
+        phone: meta.phone || '',
+        role: 'user',
+      };
     }
     state.user = { ...profile, email: user.email };
     console.log('[init] state.user setado');
