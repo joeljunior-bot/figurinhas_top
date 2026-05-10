@@ -163,33 +163,36 @@ function navigate(view) {
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+let initInProgress = false;
 async function initApp() {
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) { doLogout(); return; }
+  if (initInProgress) return;
+  initInProgress = true;
+  try {
+    const { data: { user }, error: userErr } = await sb.auth.getUser();
+    if (userErr || !user) throw new Error('Sessão inválida');
 
-  let { data: profile, error } = await sb
-    .from('profiles')
-    .select('id, name, phone, role')
-    .eq('id', user.id)
-    .single();
+    let { data: profile, error } = await sb
+      .from('profiles')
+      .select('id, name, phone, role')
+      .eq('id', user.id)
+      .single();
 
-  // Se não tem perfil ainda (típico após primeiro login Google), cria agora
-  if (error && error.code === 'PGRST116') {
-    const meta = user.user_metadata || {};
-    const newProfile = {
-      id: user.id,
-      name: meta.name || meta.full_name || user.email.split('@')[0],
-      phone: meta.phone || '',
-      role: 'user',
-    };
-    const { data: created, error: insErr } = await sb.from('profiles').insert(newProfile).select().single();
-    if (insErr) { toast('Erro ao criar perfil: ' + insErr.message); return; }
-    profile = created;
-  } else if (error || !profile) {
-    toast('Erro ao carregar perfil. Recarregue a página.');
-    return;
-  }
-  state.user = { ...profile, email: user.email };
+    // Se não tem perfil ainda (típico após primeiro login Google), cria agora
+    if (error && error.code === 'PGRST116') {
+      const meta = user.user_metadata || {};
+      const newProfile = {
+        id: user.id,
+        name: meta.name || meta.full_name || user.email.split('@')[0],
+        phone: meta.phone || '',
+        role: 'user',
+      };
+      const { data: created, error: insErr } = await sb.from('profiles').insert(newProfile).select().single();
+      if (insErr) throw new Error('Erro ao criar perfil: ' + insErr.message);
+      profile = created;
+    } else if (error || !profile) {
+      throw new Error('Erro ao carregar perfil: ' + (error?.message || 'desconhecido'));
+    }
+    state.user = { ...profile, email: user.email };
 
   document.getElementById('auth-screen').classList.add('hidden');
   document.getElementById('app-screen').classList.remove('hidden');
@@ -207,6 +210,14 @@ async function initApp() {
 
   await loadCollection();
   navigate('dashboard');
+  } finally {
+    initInProgress = false;
+  }
+}
+
+function showAuthScreen() {
+  document.getElementById('app-screen')?.classList.add('hidden');
+  document.getElementById('auth-screen')?.classList.remove('hidden');
 }
 
 async function loadCollection() {
@@ -849,23 +860,44 @@ document.getElementById('reg-password')?.addEventListener('keydown', e => { if (
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 (async function boot() {
-  // Limpa hash de OAuth da URL após detectar
-  const hadOAuthHash = window.location.hash.includes('access_token');
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) {
+  try {
+    const hadOAuthHash = window.location.hash.includes('access_token');
+    const { data: { session }, error } = await sb.auth.getSession();
+    if (error) throw error;
+
     if (hadOAuthHash) history.replaceState(null, '', window.location.pathname);
-    try { await initApp(); return; }
-    catch (e) { console.error(e); await sb.auth.signOut(); }
+
+    if (session) {
+      await initApp();
+    } else {
+      showAuthScreen();
+    }
+  } catch (e) {
+    console.error('Boot error:', e);
+    try { await sb.auth.signOut(); } catch {}
+    state.user = null;
+    showAuthScreen();
+    if (e.message && !e.message.includes('Sessão inválida')) {
+      toast('Erro ao carregar. Faça login novamente.');
+    }
   }
-  document.getElementById('auth-screen').classList.remove('hidden');
 })();
 
 sb.auth.onAuthStateChange(async (event, session) => {
   if (event === 'SIGNED_OUT') {
-    document.getElementById('app-screen').classList.add('hidden');
-    document.getElementById('auth-screen').classList.remove('hidden');
-  } else if (event === 'SIGNED_IN' && session && !state.user) {
-    // Login bem-sucedido (incl. via Google) e ainda não inicializamos
-    await initApp();
+    state.user = null;
+    state.collection = [];
+    state.opportunities = null;
+    state.proposals = null;
+    showAuthScreen();
+  } else if (event === 'SIGNED_IN' && session && !state.user && !initInProgress) {
+    try { await initApp(); }
+    catch (e) {
+      console.error('Auto-init failed:', e);
+      await sb.auth.signOut();
+      showAuthScreen();
+    }
+  } else if (event === 'TOKEN_REFRESHED') {
+    console.log('Token atualizado');
   }
 });
