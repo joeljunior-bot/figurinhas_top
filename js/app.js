@@ -164,18 +164,27 @@ function navigate(view) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 let initInProgress = false;
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout em ${label} (${ms}ms)`)), ms)
+    )
+  ]);
+}
+
 async function initApp() {
   if (initInProgress) return;
   initInProgress = true;
   try {
-    const { data: { user }, error: userErr } = await sb.auth.getUser();
+    const { data: { user }, error: userErr } = await withTimeout(sb.auth.getUser(), 8000, 'getUser');
     if (userErr || !user) throw new Error('Sessão inválida');
 
-    let { data: profile, error } = await sb
-      .from('profiles')
-      .select('id, name, phone, role')
-      .eq('id', user.id)
-      .single();
+    let { data: profile, error } = await withTimeout(
+      sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single(),
+      8000, 'fetch profile'
+    );
 
     // Se não tem perfil ainda (típico após primeiro login Google), cria agora
     if (error && error.code === 'PGRST116') {
@@ -221,11 +230,16 @@ function showAuthScreen() {
 }
 
 async function loadCollection() {
-  const { data: stickers, error: sErr } = await sb.from('stickers').select('*').order('id');
+  const { data: stickers, error: sErr } = await withTimeout(
+    sb.from('stickers').select('*').order('id'),
+    10000, 'load stickers'
+  );
   if (sErr) { toast('Erro: ' + sErr.message); return; }
 
-  const { data: mine } = await sb
-    .from('user_stickers').select('sticker_id, quantity').eq('user_id', state.user.id);
+  const { data: mine } = await withTimeout(
+    sb.from('user_stickers').select('sticker_id, quantity').eq('user_id', state.user.id),
+    10000, 'load user_stickers'
+  );
   const map = {};
   (mine || []).forEach(m => map[m.sticker_id] = m.quantity);
   state.collection = stickers.map(s => ({ ...s, quantity: map[s.id] || 0 }));
