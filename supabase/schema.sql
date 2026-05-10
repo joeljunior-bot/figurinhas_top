@@ -368,9 +368,8 @@ begin
   for c in select * from jsonb_array_elements(countries) loop
     for i in 1..20 loop
       ttype := case
-        when i = 1 then 'escudo'
-        when i <= 3 then 'brilhante'
-        else 'comum'
+        when i = 1 then 'escudo'  -- apenas o brasão é brilhante
+        else 'comum'              -- stickers 2-20 são jogadores comuns
       end;
       insert into public.stickers (code, section, country, number, type, description, flag)
       values (
