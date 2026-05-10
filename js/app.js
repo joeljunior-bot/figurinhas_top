@@ -5,6 +5,12 @@
 if (!window.SUPABASE_URL || window.SUPABASE_URL.startsWith('COLE_')) {
   alert('⚠️ Configure suas credenciais do Supabase em js/supabase-config.js');
 }
+// Limpa o hash do OAuth da URL IMEDIATAMENTE para evitar loops
+if (window.location.hash.includes('access_token')) {
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  console.log('[boot] hash OAuth removido da URL');
+}
+
 const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
 
 const state = {
