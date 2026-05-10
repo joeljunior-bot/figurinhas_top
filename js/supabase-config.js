@@ -10,4 +10,4 @@
    ────────────────────────────────────────────────────────────────────────── */
 
 window.SUPABASE_URL  = 'https://lvyycuttmcnnhuphloxh.supabase.co';
-window.SUPABASE_ANON_KEY = 'sb_publishable_A5eLz3NoGZJbdN-flgS7Qw_AZo4jvya';
+window.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2eXljdXR0bWNubmh1cGhsb3hoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzNTc1MjUsImV4cCI6MjA5MzkzMzUyNX0.Yyi9GBiM1i9bGEFLzXQR54YjPK5IFYNIRXcsW3Rfz-w';
