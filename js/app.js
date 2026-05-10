@@ -209,14 +209,20 @@ async function doResetPassword() {
 }
 
 async function doLogout() {
-  await sb.auth.signOut();
+  appStarted = false;
+  initInProgress = false;
   state.user = null;
   state.collection = [];
   state.opportunities = null;
   state.proposals = null;
+
+  // Mostra tela de login imediatamente, sem esperar o signOut
   document.getElementById('app-screen').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
   showLogin();
+
+  // Faz signOut em background (sem travar a UI)
+  try { await sb.auth.signOut(); } catch {}
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
