@@ -82,6 +82,22 @@ async function doLogin() {
   }
 }
 
+async function doGoogleLogin() {
+  try {
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin + window.location.pathname }
+    });
+    if (error) throw error;
+  } catch (e) {
+    const errEl = document.getElementById('login-error') || document.getElementById('reg-error');
+    if (errEl) {
+      errEl.textContent = 'Erro Google: ' + e.message;
+      errEl.classList.remove('hidden');
+    }
+  }
+}
+
 async function doRegister() {
   const name = document.getElementById('reg-name').value.trim();
   const email = document.getElementById('reg-email').value.trim();
@@ -151,13 +167,25 @@ async function initApp() {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) { doLogout(); return; }
 
-  const { data: profile, error } = await sb
+  let { data: profile, error } = await sb
     .from('profiles')
     .select('id, name, phone, role')
     .eq('id', user.id)
     .single();
 
-  if (error || !profile) {
+  // Se não tem perfil ainda (típico após primeiro login Google), cria agora
+  if (error && error.code === 'PGRST116') {
+    const meta = user.user_metadata || {};
+    const newProfile = {
+      id: user.id,
+      name: meta.name || meta.full_name || user.email.split('@')[0],
+      phone: meta.phone || '',
+      role: 'user',
+    };
+    const { data: created, error: insErr } = await sb.from('profiles').insert(newProfile).select().single();
+    if (insErr) { toast('Erro ao criar perfil: ' + insErr.message); return; }
+    profile = created;
+  } else if (error || !profile) {
     toast('Erro ao carregar perfil. Recarregue a página.');
     return;
   }
@@ -691,21 +719,39 @@ async function renderAdminTab(tab) {
     } else if (tab === 'users') {
       const { data: users, error } = await sb.from('profiles').select('id, name, phone, role, created_at').order('created_at', { ascending: false });
       if (error) throw error;
+
+      const userRows = await Promise.all(users.map(async u => {
+        const { count } = await sb.from('user_stickers').select('*', { count: 'exact', head: true }).eq('user_id', u.id).gte('quantity', 1);
+        return { ...u, owned: count || 0 };
+      }));
+
       content.innerHTML = `
+        <p style="color:var(--text2);font-size:0.85rem;margin-bottom:12px">Total: <strong>${users.length}</strong> usuário(s) cadastrado(s)</p>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Nome</th><th>WhatsApp</th><th>Função</th><th>Cadastro</th></tr></thead>
+            <thead><tr><th>Nome</th><th>WhatsApp</th><th>Figurinhas</th><th>Função</th><th>Cadastro</th><th>Ações</th></tr></thead>
             <tbody>
-              ${users.map(u => `
+              ${userRows.map(u => `
                 <tr>
                   <td><strong>${u.name}</strong></td>
                   <td>${u.phone || '—'}</td>
+                  <td><span class="badge badge-green">${u.owned}</span></td>
                   <td><span class="badge ${u.role === 'admin' ? 'badge-orange' : 'badge-gray'}">${u.role}</span></td>
                   <td>${new Date(u.created_at).toLocaleDateString('pt-BR')}</td>
+                  <td>
+                    ${u.id === state.user.id
+                      ? '<span style="color:var(--text3);font-size:0.78rem">(você)</span>'
+                      : u.role === 'admin'
+                        ? `<button class="btn btn-outline btn-xs" onclick="adminSetRole('${u.id}', 'user')">Rebaixar</button>`
+                        : `<button class="btn btn-success btn-xs" onclick="adminSetRole('${u.id}', 'admin')">Promover</button>
+                           <button class="btn btn-danger btn-xs" onclick="adminDeleteUser('${u.id}', '${u.name.replace(/'/g, "\\'")}')">Remover</button>`
+                    }
+                  </td>
                 </tr>`).join('')}
             </tbody>
           </table>
-        </div>`;
+        </div>
+        <p style="color:var(--text3);font-size:0.78rem;margin-top:12px">💡 Remover usuário apaga apenas o perfil e suas figurinhas. Para remover totalmente do sistema (login), use o painel <strong>Authentication → Users</strong> no Supabase.</p>`;
     } else if (tab === 'stickers') {
       content.innerHTML = `
         <div class="admin-form">
@@ -779,6 +825,23 @@ async function adminDeleteSticker(id, code) {
   loadAdminStickers();
 }
 
+async function adminSetRole(userId, newRole) {
+  const action = newRole === 'admin' ? 'promover a admin' : 'rebaixar a usuário';
+  if (!confirm(`Deseja ${action}?`)) return;
+  const { error } = await sb.from('profiles').update({ role: newRole }).eq('id', userId);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast(`✅ Função alterada para ${newRole}`);
+  renderAdminTab('users');
+}
+
+async function adminDeleteUser(userId, name) {
+  if (!confirm(`Remover perfil de "${name}"? A coleção dele será apagada. Esta ação não pode ser desfeita.`)) return;
+  const { error } = await sb.from('profiles').delete().eq('id', userId);
+  if (error) { toast('Erro: ' + error.message); return; }
+  toast(`✅ Perfil de ${name} removido`);
+  renderAdminTab('users');
+}
+
 // ─── Atalhos ──────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 document.getElementById('login-password')?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
@@ -786,17 +849,23 @@ document.getElementById('reg-password')?.addEventListener('keydown', e => { if (
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 (async function boot() {
+  // Limpa hash de OAuth da URL após detectar
+  const hadOAuthHash = window.location.hash.includes('access_token');
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
+    if (hadOAuthHash) history.replaceState(null, '', window.location.pathname);
     try { await initApp(); return; }
-    catch { await sb.auth.signOut(); }
+    catch (e) { console.error(e); await sb.auth.signOut(); }
   }
   document.getElementById('auth-screen').classList.remove('hidden');
 })();
 
-sb.auth.onAuthStateChange((event) => {
+sb.auth.onAuthStateChange(async (event, session) => {
   if (event === 'SIGNED_OUT') {
     document.getElementById('app-screen').classList.add('hidden');
     document.getElementById('auth-screen').classList.remove('hidden');
+  } else if (event === 'SIGNED_IN' && session && !state.user) {
+    // Login bem-sucedido (incl. via Google) e ainda não inicializamos
+    await initApp();
   }
 });

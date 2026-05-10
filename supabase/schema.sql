@@ -12,19 +12,38 @@ create table if not exists public.profiles (
   created_at timestamptz default now()
 );
 
--- Auto-criação de perfil quando o usuário se cadastra
+-- Lista de e-mails que viram admin automaticamente ao se cadastrar
+-- Edite esta lista para adicionar/remover admins padrão
+create or replace function public.is_admin_email(email text)
+returns boolean
+language sql immutable
+as $$
+  select email = any(array[
+    'juniorandrade@gmail.com'
+    -- adicione outros e-mails aqui, separados por vírgula
+  ]);
+$$;
+
+-- Auto-criação de perfil quando o usuário se cadastra (suporta Google + e-mail)
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer set search_path = public
 as $$
 begin
-  insert into public.profiles (id, name, phone)
+  insert into public.profiles (id, name, phone, role)
   values (
     new.id,
-    coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
-    coalesce(new.raw_user_meta_data->>'phone', '')
-  );
+    coalesce(
+      new.raw_user_meta_data->>'name',
+      new.raw_user_meta_data->>'full_name',
+      split_part(new.email, '@', 1)
+    ),
+    coalesce(new.raw_user_meta_data->>'phone', ''),
+    case when public.is_admin_email(new.email) then 'admin' else 'user' end
+  )
+  on conflict (id) do update set
+    role = case when public.is_admin_email(new.email) then 'admin' else profiles.role end;
   return new;
 end;
 $$;
