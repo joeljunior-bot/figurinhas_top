@@ -41,6 +41,9 @@
         </div>
         <div id="login-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Entrar</button>
+        <p class="auth-switch" style="margin-top:10px">
+          <a href="#" onclick="event.preventDefault(); showForgot();" style="color:var(--text2);font-size:.85rem">Esqueci minha senha</a>
+        </p>
         <p class="auth-switch">Não tem conta? <a href="#" onclick="event.preventDefault(); showRegister();">Cadastre-se</a></p>
       </form>
 
@@ -71,6 +74,52 @@
         <div id="reg-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Criar conta</button>
         <p class="auth-switch">Já tem conta? <a href="#" onclick="event.preventDefault(); showLogin();">Entrar</a></p>
+      </form>
+
+      <!-- Verify Email -->
+      <div id="verify-form" class="auth-form hidden" style="text-align:center">
+        <div style="font-size:3rem;margin-bottom:12px">📧</div>
+        <h2>Verifique seu e-mail</h2>
+        <p id="verify-email-text" style="color:var(--text2);margin:12px 0 20px;line-height:1.6;font-size:.95rem"></p>
+        <div class="form-group" style="text-align:left">
+          <label>Não recebeu? Reenviar para:</label>
+          <input type="email" id="verify-resend-email" autocomplete="email">
+        </div>
+        <button class="btn btn-primary btn-full" onclick="resendConfirmation()">Reenviar e-mail</button>
+        <p class="auth-switch"><a href="#" onclick="event.preventDefault(); showLogin();">← Voltar ao login</a></p>
+      </div>
+
+      <!-- Forgot Password -->
+      <form id="forgot-form" class="auth-form hidden" onsubmit="event.preventDefault(); doForgotPassword();">
+        <h2>Recuperar senha</h2>
+        <p style="color:var(--text2);margin-bottom:16px;font-size:.92rem;line-height:1.5">
+          Informe seu e-mail e enviaremos um link para criar uma nova senha.
+        </p>
+        <div class="form-group">
+          <label>E-mail</label>
+          <input type="email" id="forgot-email" placeholder="seu@email.com" autocomplete="email">
+        </div>
+        <div id="forgot-msg" class="form-success hidden"></div>
+        <div id="forgot-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full">Enviar link de recuperação</button>
+        <p class="auth-switch"><a href="#" onclick="event.preventDefault(); showLogin();">← Voltar ao login</a></p>
+      </form>
+
+      <!-- Reset Password (acessado via link do e-mail) -->
+      <form id="reset-form" class="auth-form hidden" onsubmit="event.preventDefault(); doResetPassword();">
+        <div style="font-size:2.5rem;text-align:center;margin-bottom:12px">🔑</div>
+        <h2>Nova senha</h2>
+        <p style="color:var(--text2);margin-bottom:16px;font-size:.92rem">Escolha uma senha forte para sua conta.</p>
+        <div class="form-group">
+          <label>Nova senha (mín. 6 caracteres)</label>
+          <input type="password" id="reset-password" placeholder="••••••" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>Confirmar nova senha</label>
+          <input type="password" id="reset-confirm" placeholder="••••••" autocomplete="new-password">
+        </div>
+        <div id="reset-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full">Definir nova senha</button>
       </form>
     </div>
   </div>

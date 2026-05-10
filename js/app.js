@@ -5,13 +5,19 @@
 if (!window.SUPABASE_URL || window.SUPABASE_URL.startsWith('COLE_')) {
   alert('⚠️ Configure suas credenciais do Supabase em js/supabase-config.js');
 }
-// Limpa o hash do OAuth da URL IMEDIATAMENTE para evitar loops
-if (window.location.hash.includes('access_token')) {
-  history.replaceState(null, '', window.location.pathname + window.location.search);
-  console.log('[boot] hash OAuth removido da URL');
-}
 
-const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+// Cria cliente ANTES de limpar o hash (Supabase precisa ler o hash)
+const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
+  auth: { detectSessionInUrl: true, flowType: 'implicit' }
+});
+
+// Detecta tipo do link de e-mail antes de limpar o hash
+const _hash = window.location.hash;
+const _hashType = new URLSearchParams(_hash.slice(_hash.indexOf('&') + 1)).get('type') ||
+                  new URLSearchParams(_hash.replace('#', '')).get('type');
+const _isRecovery = _hashType === 'recovery';
+const _isSignup   = _hashType === 'signup';
+console.log('[boot] hash type:', _hashType || 'nenhum');
 
 const state = {
   user: null,
@@ -54,14 +60,23 @@ function closeSidebar() {
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-function showLogin() {
-  document.getElementById('login-form').classList.remove('hidden');
-  document.getElementById('register-form').classList.add('hidden');
+const AUTH_FORMS = ['login-form','register-form','verify-form','forgot-form','reset-form'];
+
+function showAuthForm(id) {
+  AUTH_FORMS.forEach(f => document.getElementById(f)?.classList.add('hidden'));
+  document.getElementById(id)?.classList.remove('hidden');
 }
-function showRegister() {
-  document.getElementById('login-form').classList.add('hidden');
-  document.getElementById('register-form').classList.remove('hidden');
+function showLogin()    { showAuthForm('login-form'); }
+function showRegister() { showAuthForm('register-form'); }
+function showVerify(email) {
+  showAuthForm('verify-form');
+  const el = document.getElementById('verify-email-text');
+  if (el) el.textContent = `Enviamos um link de confirmação para ${email}. Clique no link para ativar sua conta.`;
+  const inp = document.getElementById('verify-resend-email');
+  if (inp) inp.value = email || '';
 }
+function showForgot()   { showAuthForm('forgot-form'); }
+function showReset()    { showAuthForm('reset-form'); }
 
 function traduzirErro(msg) {
   const map = {
@@ -122,15 +137,71 @@ async function doRegister() {
   try {
     const { data, error } = await sb.auth.signUp({
       email, password,
-      options: { data: { name, phone } }
+      options: {
+        data: { name, phone },
+        emailRedirectTo: 'https://figurinhas-top.vercel.app'
+      }
     });
     if (error) throw error;
+
     if (!data.session) {
-      toast('📧 Verifique seu e-mail para confirmar o cadastro.', 6000);
-      showLogin();
+      // Confirmação de e-mail habilitada
+      showVerify(email);
       return;
     }
-    await initApp();
+    await initApp(data.session);
+  } catch (e) {
+    errEl.textContent = traduzirErro(e.message);
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function resendConfirmation() {
+  const email = document.getElementById('verify-resend-email')?.value?.trim();
+  if (!email) { toast('Informe seu e-mail'); return; }
+  try {
+    const { error } = await sb.auth.resend({
+      type: 'signup', email,
+      options: { emailRedirectTo: 'https://figurinhas-top.vercel.app' }
+    });
+    if (error) throw error;
+    toast('✅ E-mail reenviado! Verifique sua caixa de entrada.');
+  } catch (e) { toast('Erro: ' + traduzirErro(e.message)); }
+}
+
+async function doForgotPassword() {
+  const email = document.getElementById('forgot-email').value.trim();
+  const errEl = document.getElementById('forgot-error');
+  const msgEl = document.getElementById('forgot-msg');
+  errEl.classList.add('hidden');
+  msgEl.classList.add('hidden');
+  if (!email) { errEl.textContent = 'Informe seu e-mail.'; errEl.classList.remove('hidden'); return; }
+  try {
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: 'https://figurinhas-top.vercel.app'
+    });
+    if (error) throw error;
+    msgEl.textContent = `✅ Link enviado para ${email}. Verifique sua caixa de entrada e spam.`;
+    msgEl.classList.remove('hidden');
+    document.getElementById('forgot-email').value = '';
+  } catch (e) {
+    errEl.textContent = traduzirErro(e.message);
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function doResetPassword() {
+  const password = document.getElementById('reset-password').value;
+  const confirm  = document.getElementById('reset-confirm').value;
+  const errEl    = document.getElementById('reset-error');
+  errEl.classList.add('hidden');
+  if (password.length < 6) { errEl.textContent = 'Senha deve ter ao menos 6 caracteres.'; errEl.classList.remove('hidden'); return; }
+  if (password !== confirm)  { errEl.textContent = 'As senhas não coincidem.'; errEl.classList.remove('hidden'); return; }
+  try {
+    const { error } = await sb.auth.updateUser({ password });
+    if (error) throw error;
+    toast('✅ Senha alterada! Fazendo login...', 4000);
+    setTimeout(() => { showLogin(); location.href = '/'; }, 2000);
   } catch (e) {
     errEl.textContent = traduzirErro(e.message);
     errEl.classList.remove('hidden');
@@ -956,12 +1027,31 @@ async function startApp(session) {
 sb.auth.onAuthStateChange(async (event, session) => {
   console.log('[auth]', event, session ? 'com sessão' : 'sem sessão');
 
+  // Limpa hash APÓS Supabase processar
+  if (window.location.hash.includes('access_token')) {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+
   if (event === 'INITIAL_SESSION') {
-    if (session) await startApp(session);
-    else showAuthScreen();
+    if (session) {
+      if (_isRecovery) {
+        // Link de redefinição de senha — mostra formulário de nova senha
+        showAuthScreen();
+        showReset();
+      } else {
+        await startApp(session);
+      }
+    } else {
+      showAuthScreen();
+    }
   }
   else if (event === 'SIGNED_IN') {
+    if (_isRecovery) { showAuthScreen(); showReset(); return; }
     if (session && !appStarted) await startApp(session);
+  }
+  else if (event === 'PASSWORD_RECOVERY') {
+    showAuthScreen();
+    showReset();
   }
   else if (event === 'SIGNED_OUT') {
     appStarted = false;
@@ -971,10 +1061,8 @@ sb.auth.onAuthStateChange(async (event, session) => {
     state.proposals = null;
     showAuthScreen();
   }
-  else if (event === 'TOKEN_REFRESHED') {
-    console.log('[auth] token atualizado');
-  }
   else if (event === 'USER_UPDATED') {
     console.log('[auth] usuário atualizado');
+    if (appStarted) toast('✅ Dados atualizados!');
   }
 });
