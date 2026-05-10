@@ -174,12 +174,16 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-async function initApp() {
+async function initApp(session) {
   if (initInProgress) return;
   initInProgress = true;
   try {
-    const { data: { user }, error: userErr } = await withTimeout(sb.auth.getUser(), 8000, 'getUser');
-    if (userErr || !user) throw new Error('Sessão inválida');
+    let user = session?.user;
+    if (!user) {
+      const { data } = await withTimeout(sb.auth.getSession(), 5000, 'getSession');
+      user = data?.session?.user;
+    }
+    if (!user) throw new Error('Sessão inválida');
 
     let { data: profile, error } = await withTimeout(
       sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single(),
@@ -875,10 +879,10 @@ document.getElementById('reg-password')?.addEventListener('keydown', e => { if (
 // ─── Boot via onAuthStateChange (única fonte de verdade) ──────────────────────
 let appStarted = false;
 
-async function startApp() {
+async function startApp(session) {
   if (appStarted || initInProgress) return;
   try {
-    await initApp();
+    await initApp(session);
     appStarted = true;
     // Limpa hash do OAuth da URL
     if (window.location.hash.includes('access_token')) {
@@ -898,12 +902,11 @@ sb.auth.onAuthStateChange(async (event, session) => {
   console.log('[auth]', event, session ? 'com sessão' : 'sem sessão');
 
   if (event === 'INITIAL_SESSION') {
-    // Primeira verificação ao carregar a página (já processou hash do OAuth se houver)
-    if (session) await startApp();
+    if (session) await startApp(session);
     else showAuthScreen();
   }
   else if (event === 'SIGNED_IN') {
-    if (session && !appStarted) await startApp();
+    if (session && !appStarted) await startApp(session);
   }
   else if (event === 'SIGNED_OUT') {
     appStarted = false;
