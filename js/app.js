@@ -84,9 +84,10 @@ async function doLogin() {
 
 async function doGoogleLogin() {
   try {
+    const redirectTo = 'https://figurinhas-top.vercel.app';
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin + window.location.pathname }
+      options: { redirectTo }
     });
     if (error) throw error;
   } catch (e) {
@@ -195,20 +196,28 @@ async function initApp(session) {
     );
     console.log('[init] profile result:', profile, 'error:', error);
 
-    // Se não tem perfil ainda (típico após primeiro login Google), cria agora
-    if (error && error.code === 'PGRST116') {
+    // Se não tem perfil, cria agora (primeiro login Google ou trigger falhou)
+    if (error || !profile) {
+      console.log('[init] profile não encontrado, criando...');
       const meta = user.user_metadata || {};
       const newProfile = {
         id: user.id,
-        name: meta.name || meta.full_name || user.email.split('@')[0],
+        name: meta.name || meta.full_name || meta.email || user.email?.split('@')[0] || 'Usuário',
         phone: meta.phone || '',
         role: 'user',
       };
-      const { data: created, error: insErr } = await sb.from('profiles').insert(newProfile).select().single();
-      if (insErr) throw new Error('Erro ao criar perfil: ' + insErr.message);
-      profile = created;
-    } else if (error || !profile) {
-      throw new Error('Erro ao carregar perfil: ' + (error?.message || 'desconhecido'));
+      const { data: created, error: insErr } = await withTimeout(
+        sb.from('profiles').upsert(newProfile, { onConflict: 'id' }).select().single(),
+        8000, 'create profile'
+      );
+      if (insErr) {
+        // Última tentativa: busca novamente (pode ter sido criado pelo trigger)
+        const { data: retry } = await sb.from('profiles').select('id, name, phone, role').eq('id', user.id).single();
+        if (!retry) throw new Error('Não foi possível carregar o perfil');
+        profile = retry;
+      } else {
+        profile = created;
+      }
     }
     state.user = { ...profile, email: user.email };
     console.log('[init] state.user setado');
@@ -899,17 +908,24 @@ async function startApp(session) {
   try {
     await initApp(session);
     appStarted = true;
-    // Limpa hash do OAuth da URL
     if (window.location.hash.includes('access_token')) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
   } catch (e) {
     console.error('Falha ao iniciar app:', e);
     appStarted = false;
-    try { await sb.auth.signOut(); } catch {}
-    state.user = null;
-    showAuthScreen();
-    toast('Erro ao entrar: ' + e.message, 5000);
+    initInProgress = false;
+
+    const isInvalidSession = e.message?.includes('Sessão inválida') || e.message?.includes('invalid');
+    if (isInvalidSession) {
+      try { await sb.auth.signOut(); } catch {}
+      state.user = null;
+      showAuthScreen();
+    } else {
+      // Erro de DB/rede - não desloga, mostra tela com toast
+      showAuthScreen();
+      toast('Erro ao carregar perfil. Tente fazer login novamente.', 5000);
+    }
   }
 }
 
